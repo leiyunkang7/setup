@@ -1,5 +1,7 @@
 # SETUP
 
+`https://raw.githubusercontent.com/leiyunkang7/setup/main/SETUP.md`
+
 装好工具链,把全局规则写入所有 agent 配置。
 
 ## 安装
@@ -20,8 +22,10 @@ rust / bun / nodejs
 
 ### Shell
 
-- 装 fish,设为默认 shell
-- 装 atuin
+按平台分支装并设为默认 shell;atuin 跨平台,两个平台都装。
+
+- Linux / macOS:fish
+- Windows:pwsh7
 
 ### 插件
 
@@ -41,6 +45,11 @@ rust / bun / nodejs
 ## 模型
 
 Minimax-M3,国内版 token plan。
+
+## 默认配置
+
+- git 默认编辑器 vim
+- vim 默认显示行号
 
 ## 全局规则
 
