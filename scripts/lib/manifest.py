@@ -96,7 +96,41 @@ TRACKED: list[dict] = [
     {"name": "codegraph","category": "tool", "version_args": ("--version",)},
     # category "skill_source"
     {"name": "/root/.agents/skills/", "category": "skill_source", "version_args": ()},
+    # category "skill_categories" — non-symlink subdir names of ~/.hermes/skills/
+    # representing the hermes-bundled category set synced by `hermes update`.
+    # version string is a comma-separated sorted list of names (stable, diffable).
+    # See ADR 0005.
+    {"name": "category_dirs", "category": "skill_categories", "version_args": ()},
 ]
+
+
+def _hermes_skill_category_set(hermes_home: str = "/root/.hermes") -> Optional[str]:
+    """Return a stable string describing the bundled-skill category names that
+    Hermes has currently synced into `~/.hermes/skills/`.
+
+    We treat any entry — real directory OR symlink — as "synced". A symlink
+    at `~/.hermes/skills/<name>` typically points at
+    `/root/.agents/skills/<name>`; that means the user has manually taken
+    over this category, and Hermes correctly defers to the symlink rather
+    than clobbering it. So both states count as present for sync-tracking
+    purposes. Hidden dotfiles are excluded.
+
+    The resulting string is comma-joined sorted names — stable, diffable,
+    and short enough to live in a manifest `version` field.
+    """
+    skills_root = Path(hermes_home) / "skills"
+    if not skills_root.is_dir():
+        return None
+    names: list[str] = []
+    for entry in sorted(skills_root.iterdir()):
+        if entry.name.startswith("."):
+            continue
+        # entry.is_dir() follows symlinks, so a live symlink to a real
+        # directory counts; a dangling symlink does not. We accept either
+        # followable directory or any symlink to be permissive.
+        if entry.is_dir() or entry.is_symlink():
+            names.append(entry.name)
+    return ",".join(names) if names else None
 
 
 def capture() -> Snapshot:
@@ -109,6 +143,10 @@ def capture() -> Snapshot:
             # skill source: read git HEAD short sha
             version = _git_head(name)
             binp = name
+        elif name == "category_dirs":
+            # ADR 0005: tracked snapshot of hermes-bundled category names.
+            version = _hermes_skill_category_set()
+            binp = str(Path.home() / ".hermes" / "skills")
         else:
             version = _version_of(name, args)
             binp = _which(name)

@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-# IMPORTANT: must be run with /usr/local/lib/hermes-agent/venv/bin/python (not /usr/bin/python3)
-# because we import lark_oapi, which is only installed in hermes's own venv.
-# The hermes cron we register below sets `command` to invoke this script under that interpreter.
+# IMPORTANT: real runs must use /usr/local/lib/hermes-agent/venv/bin/python (not /usr/bin/python3)
+# because the Feishu send path imports lark_oapi from Hermes's own venv.
+# Cron registers weekly-update.sh via --no-agent --script; that wrapper selects
+# the required interpreter before invoking this sibling script. See ADR 0004.
 # Manual runs:
 #     /usr/local/lib/hermes-agent/venv/bin/python /root/.hermes/scripts/weekly-update.py [--dry-run]
 """
@@ -30,6 +31,7 @@ import argparse
 import os
 import sys
 import time
+from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -48,9 +50,9 @@ def _load_skip() -> set[str]:
     skip: set[str] = set()
     if SKIP_FILE.exists():
         for line in SKIP_FILE.read_text().splitlines():
-            line = line.strip()
-            if line and not line.startswith("#"):
-                skip.add(line)
+            name = line.split("#", 1)[0].strip()
+            if name:
+                skip.add(name)
     return skip
 
 
@@ -80,8 +82,14 @@ def _run_pipeline(post_components: list[manifest.Component],
 
     # Step ordering per Q27. Each entry: (name, fn-or-None).
     # The first item is the order; the second is the upgrade function (taking Component, **kwargs).
-    pipeline: list[tuple[str, callable]] = [
-        ("hermes",         up.upgrade_hermes),         # already its own Sunday cron but keep here for completeness
+    pipeline: list[tuple[str, Callable[..., manifest.Component]]] = [
+        ("hermes",         up.upgrade_hermes),         # first phase of the single cron; see ADR 0006
+        ("category_dirs",  lambda c, dry_run: up.upgrade_skill_categories(   # ADR 0005 verify gate
+            c, dry_run=dry_run,
+            hermes_upgraded=by_name.get("hermes") is not None
+                          and by_name["hermes"].version_after is not None
+                          and by_name["hermes"].version_after != by_name["hermes"].version_before,
+        )),
         ("rustc",          up.upgrade_rustup),
         ("codex",          up.upgrade_agent_npm),
         ("claude",         up.upgrade_agent_npm),

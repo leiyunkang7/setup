@@ -18,7 +18,7 @@ import time
 from dataclasses import replace
 from pathlib import Path
 
-from .manifest import Component
+from .manifest import Component, _hermes_skill_category_set
 
 
 def _run(cmd: list[str], *, cwd: str | None = None, timeout: int = 300) -> tuple[int, str, str]:
@@ -298,3 +298,60 @@ def upgrade_skills_repo(c: Component, *, dry_run: bool) -> Component:
     return replace(c, version_after=after_sha or c.version_before, upgrade_cmd=" ".join(cmd),
                    failure=None if code == 0 else (err or out or f"exit {code}"),
                    duration_s=time.monotonic() - started)
+
+
+def upgrade_skill_categories(c: Component, *, dry_run: bool, hermes_upgraded: bool) -> Component:
+    """ADR 0005 — verify (not drive) Hermes's bundled skill-category sync.
+
+    Hermes's `hermes update` is responsible for copying bundled category dirs
+    into `~/.hermes/skills/` via `sync_skills` + `seed_profile_skills`. This
+    function does NOT re-run sync (that would double-work and risk clobbering
+    user customisations on next Hermes version, which the hash-skip is meant to
+    protect). It only RE-snapshots the category set after Hermes has had its
+    turn, so the diff between `version_before` and `version_after` is observable
+    in the digest.
+
+    Warning logic:
+      - If `hermes_upgraded` is False (e.g. the hermes step failed and the rest
+        of the pipeline was skipped), there is nothing for us to compare
+        against, so this function is a pure snapshot pass — no warning.
+      - Otherwise we compare `before` vs `after`; if Hermes shipped a new
+        category (bundled count grew) but the synced set did NOT grow, attach a
+        warning so the digest surfaces it on Monday.
+
+    Per ADR 0005: do not auto-reapply sync here. The orchestrator's job is to
+    observe Hermes's contract, not to silently fix a regression.
+    """
+    started = time.monotonic()
+    cmd = ["echo", "noop — sync owned by `hermes update` per ADR 0005"]
+    if dry_run:
+        return replace(c, version_after=c.version_before,
+                       upgrade_cmd=" ".join(cmd), duration_s=0.0)
+
+    after = _hermes_skill_category_set()
+
+    warnings: list[str] = []
+    if hermes_upgraded and c.version_before and after and c.version_before != after:
+        before_set = set(c.version_before.split(",")) if c.version_before else set()
+        after_set = set(after.split(",")) if after else set()
+        # Hermes's bundled category set grew but ~/.hermes/skills/ did not.
+        missing = sorted((before_set | after_set) - after_set)
+        added = sorted(after_set - before_set)
+        # The interesting case is: bundled added new dirs (would be visible in
+        # /usr/local/lib/hermes-agent/{skills,optional-skills}/) but the sync
+        # didn't reach ~/.hermes/skills/. We can't see bundled here without
+        # another stat call; flag the drift as a warning regardless.
+        warnings.append(
+            f"skill category set changed without hermes version change: "
+            f"added={added or '∅'} missing={missing or '∅'} "
+            f"— Hermes sync may have skipped a customised entry (ADR 0005)."
+        )
+
+    return replace(
+        c,
+        version_after=after or c.version_before,
+        upgrade_cmd=" ".join(cmd),
+        failure=None,
+        warning="; ".join(warnings) if warnings else None,
+        duration_s=time.monotonic() - started,
+    )
