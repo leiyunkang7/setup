@@ -26,6 +26,7 @@ class Component:
     upgrade_cmd: str = ""                  # exact command string we ran (or "" for skipped)
     skip_reason: Optional[str] = None      # non-None if deliberately skipped this run
     failure: Optional[str] = None         # error message if this step failed
+    warning: Optional[str] = None         # non-fatal issue (e.g. backup snapshot failed); surfaced in digest
     duration_s: float = 0.0
     bin_path: Optional[str] = None         # path returned by `which`
 

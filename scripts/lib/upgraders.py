@@ -48,30 +48,113 @@ def _read_version(bin_name: str, args: tuple[str, ...] = ("--version",)) -> str 
 
 # --------- per-component upgraders ---------
 
+def _prune_old_backups(base: Path, keep: int) -> int:
+    """Delete all but the `keep` most-recently-named entries under `base`.
+    Returns the number of entries removed. Naming is timestamp-based so a
+    sorted() on name gives chronological order — no need to stat mtimes.
+    """
+    if not base.exists():
+        return 0
+    entries = sorted(p for p in base.iterdir()
+                     if p.is_dir() or p.name.endswith(".tar.gz"))
+    # Skip the freshest `keep` entries (named with the latest timestamps).
+    for old in entries[:-keep] if keep > 0 else entries:
+        if old.is_dir():
+            import shutil as _sh
+            _sh.rmtree(old, ignore_errors=True)
+        else:
+            try:
+                old.unlink()
+            except FileNotFoundError:
+                pass
+    return max(0, len(entries) - keep)
+
+
 def upgrade_hermes(c: Component, *, dry_run: bool) -> Component:
-    """Run hermes's own upgrade command. Pre-flight tar to backup (per ADR 0002)."""
+    """Run hermes's own upgrade command. Pre-flight backup per ADR 0002.
+
+    Backup contents at ~/.hermes/backups/pre-hermes-upgrade-<ts>/:
+      - tarball: hermes-agent.tar.gz  (full /usr/local/lib/hermes-agent snapshot)
+      - patches.diff                  (small git diff of working-tree changes vs HEAD;
+                                       this is what makes re-deriving the patches cheap
+                                       per ADR 0002's "re-derive from backups" hint)
+      - HEAD-pre.txt                  (git rev-parse HEAD before upgrade, for provenance)
+
+    The patches are deliberately NOT reapplied after upgrade (ADR 0002: the cost
+    of an unattended auto-reapply outweighs the value). Backup is best-effort;
+    if either step fails, the upgrade still proceeds and a `warning` is attached
+    so the digest surfaces it on Monday.
+    """
     started = time.monotonic()
     cmd = ["hermes", "update"]
     if dry_run:
         return replace(c, version_after=c.version_before, upgrade_cmd=" ".join(cmd), duration_s=0.0)
-    backup_dir = Path.home() / ".hermes" / "backups" / f"pre-hermes-upgrade-{int(started)}"
-    backup_dir.parent.mkdir(parents=True, exist_ok=True)
-    # Per ADR 0002, we DO save a backup before upgrade, but we DO NOT reapply patches.
-    # Backup is purely for forensic recovery if the user later regrets dropping patches.
+
+    backup_base = Path.home() / ".hermes" / "backups"
+    backup_dir = backup_base / f"pre-hermes-upgrade-{int(started)}"
+
+    warnings: list[str] = []
     try:
-        subprocess.run(
-            ["tar", "-czf", str(backup_dir) + ".tar.gz",
-             "-C", "/usr/local/lib", "hermes-agent"],
-            check=False, timeout=60,
-        )
-    except Exception:
-        pass  # backup is best-effort
+        backup_base.mkdir(parents=True, exist_ok=True)
+        backup_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        # If we can't even create the backup dirs (read-only home, full disk,
+        # etc.), record the warning and skip the snapshot. The upgrade still
+        # proceeds — ADR 0002 says backup is best-effort.
+        warnings.append(f"backup dir creation failed: {e}")
+
+    if not warnings:
+        # Step 1: record HEAD + working-tree diff BEFORE upgrade. These two
+        # files are tiny (<10KB even with all of cli.py) and are the artifact
+        # that lets the user re-derive patches without untarring the snapshot.
+        try:
+            head_proc = subprocess.run(
+                ["git", "-C", "/usr/local/lib/hermes-agent", "rev-parse", "HEAD"],
+                capture_output=True, text=True, timeout=10,
+            )
+            (backup_dir / "HEAD-pre.txt").write_text(
+                (head_proc.stdout if head_proc.returncode == 0 else f"<git failed: {head_proc.stderr.strip()}>").strip() + "\n"
+            )
+            diff_proc = subprocess.run(
+                ["git", "-C", "/usr/local/lib/hermes-agent", "diff", "HEAD"],
+                capture_output=True, text=True, timeout=10,
+            )
+            diff_text = diff_proc.stdout if diff_proc.returncode == 0 else ""
+            (backup_dir / "patches.diff").write_text(diff_text)
+        except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as e:
+            warnings.append(f"git pre-snapshot failed: {e}")
+
+        # Step 2: tarball snapshot. Best-effort — large but cheap. We exclude
+        # .git so the snapshot is the *working tree* only; the patches.diff
+        # above is what the user needs to reconstruct any uncommitted edits.
+        try:
+            tar_proc = subprocess.run(
+                ["tar", "-czf", str(backup_dir / "hermes-agent.tar.gz"),
+                 "--exclude=.git",
+                 "-C", "/usr/local/lib", "hermes-agent"],
+                capture_output=True, text=True, timeout=120,
+            )
+            if tar_proc.returncode != 0:
+                warnings.append(f"tar snapshot failed (exit {tar_proc.returncode}): {tar_proc.stderr.strip()[:200]}")
+        except subprocess.TimeoutExpired:
+            warnings.append("tar snapshot timed out after 120s")
+        except FileNotFoundError:
+            warnings.append("tar binary not found on PATH")
+
+        # Step 3: rotate. Keep last 4 backups (≈1 month of weekly runs).
+        try:
+            _prune_old_backups(backup_base, keep=4)
+        except OSError as e:
+            warnings.append(f"backup rotation failed: {e}")
+
+    # Step 4: actual upgrade.
     code, out, err = _run(cmd, timeout=600)
     after = _read_version("hermes")
     return replace(
         c, version_after=after or c.version_before,
         upgrade_cmd=" ".join(cmd),
         failure=None if code == 0 else (err or out or f"exit {code}"),
+        warning="; ".join(warnings) if warnings else None,
         duration_s=time.monotonic() - started,
     )
 

@@ -28,7 +28,7 @@ def _section(title: str, items: Iterable[str]) -> str:
 
 
 def render(pre: Snapshot, post: Snapshot, *, duration_s: float, aborted: bool, dry_run: bool) -> str:
-    upgraded, failed, skipped, review = [], [], [], []
+    upgraded, failed, skipped, warnings, review = [], [], [], [], []
     d = snap_diff(pre, post)
     # In dry-run, all components appear "upgraded" because pre.before != post.after
     # (post.after is None for components the pipeline didn't touch). Filter to
@@ -48,6 +48,8 @@ def render(pre: Snapshot, post: Snapshot, *, duration_s: float, aborted: bool, d
             failed.append(f"`{c.name}` — {c.failure[:240]}")
         if c.skip_reason:
             skipped.append(f"`{c.name}` — {c.skip_reason}")
+        if c.warning:
+            warnings.append(f"`{c.name}` — {c.warning[:240]}")
     size_lines = _size_delta(pre, post)
     next_week = _next_week_plan(post, dry_run=dry_run)
 
@@ -59,7 +61,7 @@ def render(pre: Snapshot, post: Snapshot, *, duration_s: float, aborted: bool, d
     parts.append(_section("✅ Successes", upgraded))
     parts.append(_section("❌ Failures", failed))
     parts.append(_section("⏭ Skips", skipped))
-    parts.append(_section("⚠ Warnings", []))  # populated once breaking-change signals exist
+    parts.append(_section("⚠ Warnings", warnings))
     parts.append(_section("🔍 Review items", review))
     parts.append(_section("📊 Size delta", size_lines))
     parts.append(_section("🔜 Next-week plan", next_week))
