@@ -4,11 +4,10 @@ Feishu message delivery for the weekly-update orchestrator.
 Routed through hermes-side feishu (FEISHU_* env vars + lark_oapi SDK), NOT through
 OpenClaw's channels.feishu adapter. See ADR 0003.
 
-Implementation note: lark_oapi is only installed inside hermes's own venv at
-/usr/local/lib/hermes-agent/venv/lib/python3.11/site-packages/lark_oapi/. This
-script therefore MUST run under /usr/local/lib/hermes-agent/venv/bin/python.
-The hermes cron we register (weekly-update-all) sets its `command` to invoke
-weekly-update.py under that interpreter.
+Implementation note: lark_oapi is only installed inside Hermes's own venv.
+Real sends therefore MUST run under /usr/local/lib/hermes-agent/venv/bin/python.
+The weekly-update-all cron registers weekly-update.sh via --no-agent --script;
+that wrapper selects the venv interpreter before invoking weekly-update.py.
 
 Reference: plugins/platforms/feishu/adapter.py:_standalone_send in hermes source.
 """
@@ -34,7 +33,7 @@ class FeishuConfig:
             if not val:
                 if require_all:
                     raise KeyError(
-                        f"{var} not set. Check ~/.hermes/.env has FEISHU_APP_ID, "
+                        f"{var} not set. Check $HERMES_HOME/.env has FEISHU_APP_ID, "
                         f"FEISHU_APP_SECRET, FEISHU_HOME_CHANNEL."
                     )
                 val = "<unset>"
@@ -49,33 +48,29 @@ class FeishuConfig:
 
 
 def _load_env_file() -> None:
-    """Best-effort load of ~/.hermes/.env if dotenv is available.
+    """Best-effort load of the active Hermes profile's .env file.
 
-    Only sets vars that are not already present in os.environ (so the calling
-    shell wins over the .env file). We try python-dotenv first, otherwise fall
-    back to a minimal parser so we don't add a runtime dependency.
+    Only loads FEISHU_* vars and only when they are not already present in
+    os.environ (so the calling shell wins over the .env file). Real sends run
+    inside Hermes's venv, where python-dotenv is a required dependency. Other
+    credentials in .env must not enter this process.
     """
-    env_path = Path.home() / ".hermes" / ".env"
+    configured_home = os.environ.get("HERMES_HOME", "").strip()
+    hermes_home = (
+        Path(configured_home).expanduser()
+        if configured_home
+        else Path.home() / ".hermes"
+    )
+    env_path = hermes_home / ".env"
     if not env_path.exists():
         return
     try:
         from dotenv import dotenv_values  # type: ignore
-        for k, v in dotenv_values(env_path).items():
+    except ImportError as exc:
+        raise RuntimeError("python-dotenv missing from the Hermes venv") from exc
+    for k, v in dotenv_values(env_path, encoding="utf-8-sig").items():
+        if k.startswith("FEISHU_"):
             os.environ.setdefault(k, v or "")
-        return
-    except ImportError:
-        pass
-    # Minimal fallback: KEY=VALUE lines, skip blanks and # comments.
-    for raw in env_path.read_text().splitlines():
-        line = raw.strip()
-        if not line or line.startswith("#"):
-            continue
-        if "=" not in line:
-            continue
-        k, _, v = line.partition("=")
-        k = k.strip()
-        v = v.strip().strip('"').strip("'")
-        os.environ.setdefault(k, v)
 
 
 def _stub_payload(markdown: str, cfg: FeishuConfig) -> dict:
@@ -84,7 +79,7 @@ def _stub_payload(markdown: str, cfg: FeishuConfig) -> dict:
         "thread_id": cfg.home_thread_id or None,
         "msg_type": "text",
         "content": {"text": markdown},
-        "_note": "real send uses lark_oapi.im.v1.CreateMessageRequest + msg_type=interactive for markdown rendering",
+        "_note": "real send uses lark_oapi.im.v1.CreateMessageRequest with msg_type=text",
     }
 
 
@@ -100,10 +95,9 @@ def send(markdown: str, *, dry_run: bool = True, payload_log: Optional[Path] = N
     _standalone_send does, but without taking on hermes's plugin-runtime
     dependency — see ADR 0003 + recon notes).
     """
-    cfg = FeishuConfig(require_all=not dry_run)
-    payload = _stub_payload(markdown, cfg)
-
     if dry_run:
+        cfg = FeishuConfig(require_all=False)
+        payload = _stub_payload(markdown, cfg)
         if payload_log is not None:
             payload_log.parent.mkdir(parents=True, exist_ok=True)
             payload_log.write_text(_render_for_log(payload))
@@ -121,9 +115,11 @@ def send(markdown: str, *, dry_run: bool = True, payload_log: Optional[Path] = N
         )
         raise
 
-    # Make sure FEISHU_* are present even when caller didn't source ~/.hermes/.env.
+    # Cron sanitizes messaging credentials from script subprocesses. Reload the
+    # active profile's .env before validating config so unattended sends work.
     _load_env_file()
     cfg = FeishuConfig(require_all=True)
+    payload = _stub_payload(markdown, cfg)
 
     # 1. build client
     domain = lark.FEISHU_DOMAIN if cfg.domain != "lark" else lark.LARK_DOMAIN

@@ -19,7 +19,7 @@ Run sequence (per Q27):
   7. prune old runs (keep 8)
 
 Usage:
-  python3 weekly-update.py [--dry-run]
+  /root/.hermes/scripts/weekly-update.sh [--dry-run]
 
 In dry-run, every upgrade step is skipped (records the command it WOULD run)
 and the feishu push is replaced with a payload-log file. No network calls,
@@ -31,6 +31,7 @@ import argparse
 import os
 import sys
 import time
+import uuid
 from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
@@ -56,8 +57,19 @@ def _load_skip() -> set[str]:
     return skip
 
 
+def _new_run_dir(base: Path, ts: str) -> Path:
+    """Return a unique run dir under `base` for a given UTC timestamp.
+
+    The discriminator `pid-6hex` makes same-second re-runs safe: the overlap
+    lock in the wrapper prevents live cron re-triggers from colliding, but a
+    user manually re-running the script inside one second (or the cron
+    delivery + a manual retry) would otherwise overwrite the prior run's
+    pre.json / post.json / digest.md / feishu-payload.json.
+    """
+    return base / f"{ts}-{os.getpid()}-{uuid.uuid4().hex[:6]}"
+
+
 def _preflight() -> bool:
-    """Network reachability check (per Q32-C). Failures add a hint to the digest."""
     import subprocess
     try:
         rc = subprocess.run(
@@ -127,7 +139,12 @@ def main(argv: list[str] | None = None) -> int:
 
     started = time.monotonic()
     ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    run_dir = RUNS_BASE / ts
+    # P0: same-second collides between concurrent runs (overlap lock now
+    # serialises the launcher, but manual re-runs inside a one-second window
+    # can still land on the same ts; the digest + payload files would silently
+    # overwrite. Delegate the discriminator to a small helper so the contract
+    # is unit-testable without mocking half the orchestrator.
+    run_dir = _new_run_dir(RUNS_BASE, ts)
     run_dir.mkdir(parents=True, exist_ok=True)
     skip = _load_skip()
 
