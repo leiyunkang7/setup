@@ -100,7 +100,7 @@ Minimax-M3,国内版 token plan。
 
 ## Stage 5 — 全局规则 �
 
-**完成准则**:hermes / openclaw / claude / opencode / codex / pi 这 6 个 agent 的全局配置文件都包含以下 4 条规则。
+**完成准则**:hermes / openclaw / claude / opencode / codex / pi 这 6 个 agent 的全局配置文件都包含以下 5 条规则。
 
 **合并策略**:不覆盖现有配置,优先复用现有条目;如有重复则跳过。
 
@@ -110,5 +110,6 @@ Minimax-M3,国内版 token plan。
 2. **对抗性审查**:相对复杂的任务完成后,开启多 Agent 对抗性审查。
 3. **代理优先**:遇到网络问题,先排查系统代理。
 4. **脚本栈**:默认 bun + ts。
+5. **写入规则**:时间默认使用东八区（UTC+8）,文本默认使用 UTF-8 编码。
 
 ⏸ 等 6 个 agent 的配置都验证通过。
