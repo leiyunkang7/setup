@@ -12,13 +12,16 @@ leave already-successful steps in place).
 """
 from __future__ import annotations
 
+import json
+import os
 import shutil
 import subprocess
+import tempfile
 import time
 from dataclasses import replace
 from pathlib import Path
 
-from .manifest import Component, _hermes_skill_category_set
+from .manifest import Component, _hermes_skill_category_set, yazi_version
 
 
 def _run(cmd: list[str], *, cwd: str | None = None, timeout: int = 300) -> tuple[int, str, str]:
@@ -44,6 +47,127 @@ def _read_version(bin_name: str, args: tuple[str, ...] = ("--version",)) -> str 
         return out.strip().splitlines()[0] if out.strip() else None
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError):
         return None
+
+
+# --------- GitHub prebuilt releases ---------
+
+def _latest_gh_tag(repo: str) -> tuple[int, str, str]:
+    """Query GitHub releases/latest. Returns (rc, tag, error)."""
+    api = f"https://api.github.com/repos/{repo}/releases/latest"
+    rc, out, err = _run(["curl", "-sS", "--max-time", "30", api], timeout=60)
+    if rc != 0:
+        return rc, "", err.strip()[:200]
+    try:
+        tag = json.loads(out)["tag_name"]
+    except (json.JSONDecodeError, KeyError) as e:
+        return 1, "", f"bad release JSON from {api}: {e}"
+    return 0, tag, ""
+
+
+def upgrade_yazi(c: Component, *, dry_run: bool) -> Component:
+    """yazi ships as prebuilt GitHub releases; fetch latest zip and replace
+    /usr/local/bin/{yazi,ya}. On any failure the existing binaries are left
+    untouched (download goes to a temp dir first, copy happens last)."""
+    started = time.monotonic()
+    cmd = "curl latest release → install yazi-x86_64-unknown-linux-gnu.zip"
+    if dry_run:
+        return replace(c, version_after=c.version_before, upgrade_cmd=cmd, duration_s=0.0)
+
+    rc, tag, err = _latest_gh_tag("sxyazi/yazi")
+    if rc != 0:
+        return replace(c, version_after=c.version_before, upgrade_cmd=cmd, failure=err,
+                       duration_s=time.monotonic() - started)
+    current = yazi_version() or ""
+    if tag.lstrip("v") == current:
+        return replace(c, version_after=current, upgrade_cmd=f"yazi already at {tag}",
+                       duration_s=time.monotonic() - started)
+
+    tmp = Path(tempfile.mkdtemp(prefix="yazi-upgrade-"))
+    zip_path = tmp / "yazi.zip"
+    try:
+        rc, _, e = _run(
+            ["curl", "-fsSL", "--max-time", "120", "-o", str(zip_path),
+             f"https://github.com/sxyazi/yazi/releases/download/{tag}/yazi-x86_64-unknown-linux-gnu.zip"],
+            timeout=180)
+        if rc != 0:
+            return replace(c, version_after=c.version_before, upgrade_cmd=cmd,
+                           failure=f"download failed: {e.strip()[:200]}",
+                           duration_s=time.monotonic() - started)
+        rc, _, e = _run(["unzip", "-o", "-q", str(zip_path), "-d", str(tmp)], timeout=120)
+        if rc != 0:
+            return replace(c, version_after=c.version_before, upgrade_cmd=cmd,
+                           failure=f"unzip failed: {e.strip()[:200]}",
+                           duration_s=time.monotonic() - started)
+        extracted = tmp / "yazi-x86_64-unknown-linux-gnu"
+        for bin_name in ("yazi", "ya"):
+            src = extracted / bin_name
+            if not src.exists():
+                return replace(c, version_after=c.version_before, upgrade_cmd=cmd,
+                               failure=f"{bin_name} missing in release zip",
+                               duration_s=time.monotonic() - started)
+            dest = Path("/usr/local/bin") / bin_name
+            shutil.copy2(src, dest)
+            dest.chmod(0o755)
+        after = yazi_version() or c.version_before
+        return replace(c, version_after=after, upgrade_cmd=cmd,
+                       duration_s=time.monotonic() - started)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def upgrade_herdr(c: Component, *, dry_run: bool) -> Component:
+    """herdr ships as a single prebuilt binary (herdr-linux-x86_64) on GitHub
+    releases; atomically replace ~/.local/bin/herdr via os.replace."""
+    started = time.monotonic()
+    cmd = "curl latest release → install herdr-linux-x86_64"
+    if dry_run:
+        return replace(c, version_after=c.version_before, upgrade_cmd=cmd, duration_s=0.0)
+
+    rc, tag, err = _latest_gh_tag("herdrdev/herdr")
+    if rc != 0:
+        return replace(c, version_after=c.version_before, upgrade_cmd=cmd, failure=err,
+                       duration_s=time.monotonic() - started)
+    current_line = _read_version("herdr") or ""
+    current = current_line.split()[-1] if current_line else ""  # "herdr 0.8.0" → "0.8.0"
+    if tag.lstrip("v") == current:
+        return replace(c, version_after=current_line, upgrade_cmd=f"herdr already at {tag}",
+                       duration_s=time.monotonic() - started)
+
+    dest = Path("/root/.local/bin/herdr")
+    tmp = Path(tempfile.mkdtemp(prefix="herdr-upgrade-"))
+    new_bin = tmp / "herdr-new"
+    try:
+        rc, _, e = _run(
+            ["curl", "-fsSL", "--max-time", "120", "-o", str(new_bin),
+             f"https://github.com/herdrdev/herdr/releases/download/{tag}/herdr-linux-x86_64"],
+            timeout=180)
+        if rc != 0:
+            return replace(c, version_after=c.version_before, upgrade_cmd=cmd,
+                           failure=f"download failed: {e.strip()[:200]}",
+                           duration_s=time.monotonic() - started)
+        # Sanity: GitHub errors (404 / rate-limit HTML) must not clobber the live binary.
+        try:
+            head = new_bin.open("rb").read(4)
+        except OSError as e:
+            return replace(c, version_after=c.version_before, upgrade_cmd=cmd,
+                           failure=f"read check failed: {e}",
+                           duration_s=time.monotonic() - started)
+        if head != b"\x7fELF":
+            return replace(c, version_after=c.version_before, upgrade_cmd=cmd,
+                           failure="downloaded file is not an ELF binary",
+                           duration_s=time.monotonic() - started)
+        new_bin.chmod(0o755)
+        try:
+            os.replace(new_bin, dest)
+        except OSError as e:
+            return replace(c, version_after=c.version_before, upgrade_cmd=cmd,
+                           failure=f"replace failed: {e}",
+                           duration_s=time.monotonic() - started)
+        after = _read_version("herdr") or c.version_before
+        return replace(c, version_after=after, upgrade_cmd=cmd,
+                       duration_s=time.monotonic() - started)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
 
 
 # --------- per-component upgraders ---------

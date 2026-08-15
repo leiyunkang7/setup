@@ -27,7 +27,7 @@ def probe(bin_name: str) -> tuple[bool, str]:
             )
         except subprocess.TimeoutExpired:
             return False, f"{bin_name} {' '.join(args)}: timeout"
-        except FileNotFoundError:
+        except (FileNotFoundError, OSError):
             return False, f"{bin_name}: binary disappeared"
         combined = (proc.stdout + proc.stderr).lower()
         if proc.returncode != 0:

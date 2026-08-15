@@ -111,6 +111,8 @@ def _run_pipeline(post_components: list[manifest.Component],
         ("npm",            lambda c, dry_run: up.upgrade_npm_globals(c, dry_run=dry_run, skip=skip)),
         ("bun",            lambda c, dry_run: up.upgrade_bun_globals(c, dry_run=dry_run, skip=skip)),
         ("uv",             up.upgrade_uv_tools),
+        ("yazi",           up.upgrade_yazi),
+        ("herdr",          up.upgrade_herdr),
         ("/root/.agents/skills/", up.upgrade_skills_repo),
     ]
 

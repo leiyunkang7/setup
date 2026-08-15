@@ -64,8 +64,23 @@ def _version_of(name: str, args: tuple[str, ...] = ("--version",)) -> Optional[s
     try:
         out = subprocess.check_output([binp, *args], text=True, timeout=10, stderr=subprocess.STDOUT)
         return out.strip().splitlines()[0] if out.strip() else None
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError):
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError, OSError):
         return None
+
+
+def yazi_version() -> Optional[str]:
+    """Real yazi version. `yazi --version` prints a banner whose first line is
+    just "Yazi"; the version lives on the "Version: x.y.z" line."""
+    binp = _which("yazi")
+    if not binp:
+        return None
+    try:
+        out = subprocess.check_output([binp, "--version"], text=True, timeout=10, stderr=subprocess.STDOUT)
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        return None
+    import re
+    m = re.search(r"Version:\s*([^\s(]+)", out)
+    return m.group(1) if m else None
 
 
 # Components the orchestrator tracks. The recon report on 2026-08-09 found these;
@@ -94,6 +109,8 @@ TRACKED: list[dict] = [
     {"name": "vim",      "category": "tool", "version_args": ("--version",)},
     {"name": "ctx7",     "category": "tool", "version_args": ("--version",)},
     {"name": "codegraph","category": "tool", "version_args": ("--version",)},
+    {"name": "yazi",     "category": "tool", "version_args": ("--version",)},
+    {"name": "herdr",    "category": "tool", "version_args": ("--version",)},
     # category "skill_source"
     {"name": "/root/.agents/skills/", "category": "skill_source", "version_args": ()},
     # category "skill_categories" — non-symlink subdir names of ~/.hermes/skills/
@@ -147,6 +164,10 @@ def capture() -> Snapshot:
             # ADR 0005: tracked snapshot of hermes-bundled category names.
             version = _hermes_skill_category_set()
             binp = str(Path.home() / ".hermes" / "skills")
+        elif name == "yazi":
+            # banner output — see yazi_version()
+            version = yazi_version()
+            binp = _which(name)
         else:
             version = _version_of(name, args)
             binp = _which(name)
