@@ -17,7 +17,7 @@
 |----|-------------------------------|----|
 | 1  | 运行时(rust / bun / node)     | ⏸ |
 | 2  | Shell(fish / pwsh7)+ 默认配置 | ⏸ |
-| 3  | Agent(6 个)+ 插件 + cc-switch | ⏸ |
+| 3  | Agent(6 个)+ herdr + 插件 + cc-switch | ⏸ |
 | 4  | MCP + 模型 + CLI 鉴权         | ⏸ |
 | 5  | 全局规则(写入所有 agent)      | ⏸ |
 | 6  | 定时更新软件(自动维护)        | —  |
@@ -56,7 +56,7 @@
 
 ## Stage 3 — Agent 与插件 ⏸
 
-**完成准则**:6 个 agent 命令(`codex --version` 等)都能跑;技能目录非空(`ls ~/.agents/skills | wc -l` > 0);cc-switch 已安装(macOS 看 `brew list --cask cc-switch`,Linux 看 `dpkg -l cc-switch`,Windows 为 MSI 或便携版)。
+**完成准则**:6 个 agent 命令(`codex --version` 等)都能跑;herdr 已安装(`herdr --version` 有输出);技能目录非空(`ls ~/.agents/skills | wc -l` > 0,含 herdr skill);cc-switch 已安装(macOS 看 `brew list --cask cc-switch`,Linux 看 `dpkg -l cc-switch`,Windows 为 MSI 或便携版)。
 
 ### 编码 agent
 
@@ -65,6 +65,14 @@ codex / claude / pi / opencode
 ### 自主 agent
 
 hermes / openclaw
+
+### herdr — 编码 agent 运行时
+
+Rust 写的终端复用/常驻服务,让 agent 在后台终端里持续工作(合盖、断网、重启后仍可重连);单二进制,无 Electron。项目:https://github.com/herdrdev/herdr(文档 https://herdr.dev/docs)。
+
+- 安装:`curl -fsSL https://herdr.dev/install.sh | sh` → `~/.local/bin/herdr`,与 Stage 6 weekly-update 的升级路径一致;macOS 也可 `brew install herdr`,Windows 用 `irm https://herdr.dev/install.ps1 | iex`(beta)
+- skill:`npx skills add herdrdev/herdr --skill herdr -g`(全局安装;若此前装在仓库根目录的旧版,重跑一次 add 而非 `skills update`)
+- 使用:先 `herdr` 启动,再在 herdr 终端里启动 agent(如 `herdrclaude`),agent 会拿到 `HERDR_ENV=1`,skill 的安全规则据此生效;`ctrl+b q` 分离,再 `herdr` 重连
 
 ### 插件
 
@@ -84,7 +92,7 @@ hermes / openclaw
 
 首次启动可手动导入现有 CLI 配置作为默认 provider;切换后需重启终端或对应 CLI 生效(Claude Code 例外,支持热切换)。
 
-⏸ 等 6 个 agent、技能目录与 cc-switch 验证通过,进入 Stage 4。
+⏸ 等 6 个 agent、herdr(含 skill)、技能目录与 cc-switch 验证通过,进入 Stage 4。
 
 ---
 
@@ -143,7 +151,7 @@ Minimax-M3,国内版 token plan。
   7. npm 全局包 — `npm update -g`(skip.txt 除外)
   8. bun 全局包 — `bun add -g --latest`(skip.txt 除外)
   9. uv tools — `uv tool upgrade --all`
-  10. yazi / herdr — GitHub 预编译 release,临时目录下载→校验(ELF/zip)→原子替换
+   10. yazi / herdr — GitHub 预编译 release,临时目录下载→校验(ELF/zip)→原子替换(herdr 首次安装见 Stage 3)
   11. `/root/.agents/skills/` — `git pull --rebase --autostash`
 - 产物:`~/.hermes/cache/weekly-update/<ts>-<pid>-<hex>/`(pre.json / post.json / digest.md / feishu-payload.json),保留 8 份
 - 跳过清单:`~/.hermes/scripts/skip.txt`(apt / dpkg / pwsh / brew / skills / pip / node)
