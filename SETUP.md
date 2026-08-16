@@ -17,7 +17,7 @@
 |----|-------------------------------|----|
 | 1  | 运行时(rust / bun / node)     | ⏸ |
 | 2  | Shell(fish / pwsh7)+ 默认配置 | ⏸ |
-| 3  | Agent(6 个)+ 插件             | ⏸ |
+| 3  | Agent(6 个)+ 插件 + cc-switch | ⏸ |
 | 4  | MCP + 模型 + CLI 鉴权         | ⏸ |
 | 5  | 全局规则(写入所有 agent)      | ⏸ |
 | 6  | 定时更新软件(自动维护)        | —  |
@@ -56,7 +56,7 @@
 
 ## Stage 3 — Agent 与插件 ⏸
 
-**完成准则**:6 个 agent 命令(`codex --version` 等)都能跑;技能目录非空。
+**完成准则**:6 个 agent 命令(`codex --version` 等)都能跑;技能目录非空;cc-switch 已安装(macOS 看 `brew list --cask cc-switch`,Linux 看 `dpkg -l cc-switch`,Windows 为 MSI 或便携版)。
 
 ### 编码 agent
 
@@ -73,7 +73,18 @@ hermes / openclaw
 - skillhub(CN 源):https://skillhub.cn/install/skillhub.md
   - 收录:`@tencent-adm/ima-skills`
 
-⏸ 等 6 个 agent 与技能目录验证通过,进入 Stage 4。
+### cc-switch — provider 切换管理
+
+跨平台桌面应用,统一管理本工具链 agent(Claude Code / Codex / OpenCode / OpenClaw / Hermes 等)的 provider 切换,附带 MCP / Skills 统一管理,数据存 `~/.cc-switch/cc-switch.db`。自带自动更新,无需加入 weekly-update 管道。
+
+- 项目:https://github.com/farion1231/cc-switch(官网 https://ccswitch.io,CN 直连下载)
+- macOS:`brew install --cask cc-switch`(官方推荐)
+- Windows:winget 暂无此包,从 GitHub Releases 下载 `CC-Switch-v<ver>-Windows.msi`(推荐,支持自动更新)或 `-Windows-Portable.zip`
+- Linux:GitHub Releases 下载 `.deb` / `.rpm` / `.AppImage`,按 `uname -m` 选 x86_64 或 arm64
+
+首次启动可手动导入现有 CLI 配置作为默认 provider;切换后需重启终端或对应 CLI 生效(Claude Code 例外,支持热切换)。
+
+⏸ 等 6 个 agent、技能目录与 cc-switch 验证通过,进入 Stage 4。
 
 ---
 
