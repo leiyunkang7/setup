@@ -26,11 +26,11 @@
 
 ## Stage 1 — 运行时 ⏸
 
-**完成准则**:`rustc --version`、`bun --version`、`node --version` 三条命令都能输出。
+**完成准则**:`rustc --version`、`bun --version`、`node --version`、`fnm --version` 四条命令都能输出。
 
 - rust:https://rustup.rs
 - bun:https://bun.sh
-- nodejs:https://nodejs.org
+- node:用 fnm 安装管理(https://github.com/Schniz/fnm),不要官网直装——Stage 6 的 weekly-update 跳过 node 的依据就是"由 fnm 管理,更新走 fnm 不走 npm"(scripts/skip.txt),官网装的 node 会被 npm 全局更新误动
 
 ⏸ 等三条命令都返回版本号,进入 Stage 2。
 
@@ -48,7 +48,7 @@
 **默认配置**
 
 - git 默认编辑器 vim
-- vim 默认显示行号
+- vim 默认显示行号(验证:`vim -es -c 'set number?' -c qa`,应输出 `number`)
 
 ⏸ 等 `$SHELL` 与 vim 行号都验证通过,进入 Stage 3。
 
@@ -56,7 +56,7 @@
 
 ## Stage 3 — Agent 与插件 ⏸
 
-**完成准则**:6 个 agent 命令(`codex --version` 等)都能跑;技能目录非空;cc-switch 已安装(macOS 看 `brew list --cask cc-switch`,Linux 看 `dpkg -l cc-switch`,Windows 为 MSI 或便携版)。
+**完成准则**:6 个 agent 命令(`codex --version` 等)都能跑;技能目录非空(`ls ~/.agents/skills | wc -l` > 0);cc-switch 已安装(macOS 看 `brew list --cask cc-switch`,Linux 看 `dpkg -l cc-switch`,Windows 为 MSI 或便携版)。
 
 ### 编码 agent
 
@@ -114,15 +114,15 @@ Minimax-M3,国内版 token plan。
 
 **完成准则**:hermes / openclaw / claude / opencode / codex / pi 这 6 个 agent 的全局配置文件都包含以下 5 条规则。
 
-**合并策略**:不覆盖现有配置,优先复用现有条目;如有重复则跳过。
+**合并策略**:不覆盖现有配置,优先复用现有条目;如有重复则跳过。规则以 [AGENTS.md](AGENTS.md) 的 `<!-- SETUP_GLOBAL_RULES_START/END -->` 标记块为唯一源。
 
-写入 6 个 agent 的全局配置,规则内容见 [AGENTS.md](AGENTS.md)。
+同步脚本:`bun run scripts/sync-rules.ts --apply`(默认 dry-run,只打印 digest 不写文件;`--agent-file <name>=<path>` 可覆盖各 agent 配置路径,Windows 必用)。每个被写入的文件先备份到 `~/.setup-backups/<ts>/`;已有标记块的文件只替换块内内容,没有的则在末尾追加。以后改规则只改 AGENTS.md 再重跑即可,不再手工逐条写。
 
-⏸ 等 6 个 agent 的配置都验证通过。
+⏸ 等 `bun run scripts/sync-rules.ts`(dry-run)对 6 个 agent 全部显示 up-to-date。
 
 ---
 
-## Stage 6 — 定时更新软件 ⏸
+## Stage 6 — 定时更新软件(自动维护,无手动步骤)
 
 **完成准则**:`hermes cron list` 能看到 `weekly-update-all`(周日 20:00 UTC = 周一 04:00 东八区)与 `weekly-apt-security-watch`(周一 08:00 UTC);`~/.hermes/scripts/weekly-update.sh --dry-run` 能产出 digest 且不执行任何真实升级。
 
