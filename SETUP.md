@@ -30,7 +30,7 @@
 
 - rust:https://rustup.rs
 - bun:https://bun.sh
-- node:用 fnm 安装管理(https://github.com/Schniz/fnm),不要官网直装——Stage 6 的 weekly-update 跳过 node 的依据就是"由 fnm 管理,更新走 fnm 不走 npm"(scripts/skip.txt),官网装的 node 会被 npm 全局更新误动
+- node:用 fnm 安装管理(https://github.com/Schniz/fnm),不要官网直装——Stage 6 的 weekly-update 会跳过 node,依据就是"由 fnm 管理,更新走 fnm 不走 npm"(见 Stage 6 跳过清单),官网装的 node 会被 npm 全局更新误动
 
 ⏸ 等三条命令都返回版本号,进入 Stage 2。
 
@@ -122,45 +122,33 @@ Minimax-M3,国内版 token plan。
 
 **完成准则**:hermes / openclaw / claude / opencode / codex / pi 这 6 个 agent 的全局配置文件都包含以下 5 条规则。
 
-**合并策略**:不覆盖现有配置,优先复用现有条目;如有重复则跳过。规则以 [AGENTS.md](AGENTS.md) 的 `<!-- SETUP_GLOBAL_RULES_START/END -->` 标记块为唯一源。
+**规则定义**:唯一源是 [AGENTS.md](AGENTS.md) 的 `<!-- SETUP_GLOBAL_RULES_START/END -->` 标记块。本仓库只保留这一定义,不携带任何同步脚本/实现(ADR 0007);各 agent 的全局配置须与标记块内容一致,已有标记块则替换块内内容,没有则追加。合并策略:不覆盖现有配置,优先复用现有条目;如有重复则跳过。
 
-同步脚本:`bun run scripts/sync-rules.ts --apply`(默认 dry-run,只打印 digest 不写文件;`--agent-file <name>=<path>` 可覆盖各 agent 配置路径,Windows 必用)。每个被写入的文件先备份到 `~/.setup-backups/<ts>/`;已有标记块的文件只替换块内内容,没有的则在末尾追加。以后改规则只改 AGENTS.md 再重跑即可,不再手工逐条写。
-
-⏸ 等 `bun run scripts/sync-rules.ts`(dry-run)对 6 个 agent 全部显示 up-to-date。
+⏸ 等 6 个 agent 的全局配置都与 AGENTS.md 标记块内容一致,进入 Stage 6。
 
 ---
 
 ## Stage 6 — 定时更新软件(自动维护,无手动步骤)
 
-**完成准则**:`hermes cron list` 能看到 `weekly-update-all`(周日 20:00 UTC = 周一 04:00 东八区)与 `weekly-apt-security-watch`(周一 08:00 UTC);`~/.hermes/scripts/weekly-update.sh --dry-run` 能产出 digest 且不执行任何真实升级。
+**完成准则**:`hermes cron list` 能看到 `weekly-update-all`(周日 20:00 UTC = 周一 04:00 东八区)与 `weekly-apt-security-watch`(周一 08:00 UTC)。
 
-安装完成后,本机已有两套定时任务自动维护工具链,agent 不再手动盯版本。
+安装完成后,本机由两套定时任务自动维护工具链,agent 不再手动盯版本。本仓库只保留这两条定时任务的 **md 定义**,不含实现;运行时实现位于主机侧 ~/.hermes/scripts,不是本仓库的版本化内容(ADR 0007)。
 
 ### weekly-update-all — 工具链周更
 
-- 调度:`0 20 * * 0`(周日 20:00 UTC = 周一 04:00 东八区),`--no-agent --script weekly-update.sh`,deliver=local(飞书推送由脚本内 lib/feishu.py 完成)
-- 入口:`~/.hermes/scripts/weekly-update.sh` → transient systemd worker `hermes-weekly-update-worker.service` → hermes venv python 跑 `weekly-update.py`
-- 为什么要 systemd worker:`hermes update` 会重启 gateway;若不脱离 gateway cgroup,管道第一步就杀死自己(ADR 0006)
-- 升级顺序(失败即 abort 剩余步骤,ADR 0006):
-  1. hermes — `hermes update`(升级前备份到 `~/.hermes/backups/pre-hermes-upgrade-<ts>/`,保留 4 份)
-  2. category_dirs — 校验 skill 分类同步(ADR 0005,只观察不驱动)
-  3. rustc — `rustup update`
-  4. codex / claude / openclaw — `npm install -g <pkg>@latest`
-  5. opencode — `bun add -g --latest opencode-ai`
-  6. pi — hermes node 的 npm 装 `@earendil-works/pi-coding-agent@latest`
-  7. npm 全局包 — `npm update -g`(skip.txt 除外)
-  8. bun 全局包 — `bun add -g --latest`(skip.txt 除外)
-  9. uv tools — `uv tool upgrade --all`
-   10. yazi / herdr — GitHub 预编译 release,临时目录下载→校验(ELF/zip)→原子替换(herdr 首次安装见 Stage 3)
-  11. `/root/.agents/skills/` — `git pull --rebase --autostash`
-- 产物:`~/.hermes/cache/weekly-update/<ts>-<pid>-<hex>/`(pre.json / post.json / digest.md / feishu-payload.json),保留 8 份
-- 跳过清单:`~/.hermes/scripts/skip.txt`(apt / dpkg / pwsh / brew / skills / pip / node)
-- 验证:`tests/test_single_weekly_update_cron.py`(单一 cron、hermes 首步、部署字节一致)+ `tests/test-weekly-update-wrapper.sh`(transient worker 脱离 cgroup)
+单条定时任务,每周自动升级全量 agent + 工具链,结束时推送 digest 到飞书。
+
+- **调度**:周日 20:00 UTC = 周一 04:00 东八区(`0 20 * * 0`);任一升级步骤失败即中止后续步骤
+- **覆盖范围**:hermes、codex / claude / openclaw(npm 全局)、opencode(bun 全局)、pi、rustc(rustup)、npm 全局包、bun 全局包、uv tools、yazi / herdr(GitHub 预编译 release)、技能仓库 /root/.agents/skills
+- **跳过清单**:apt / dpkg / pwsh / brew / skills / pip / node 等由各自机制管理、不属于本管道的工具(如 node 走 fnm、cc-switch 自带自动更新)
+- **产物**:每次运行生成升级前后快照对比 + digest,经 hermes 侧飞书渠道推送(ADR 0003),保留最近若干份
+- **策略**:hermes 升级前备份可重建补丁(ADR 0002);升级顺序 hermes 置首、进程隔离防重启自杀(ADR 0006);hermes update 会同步 skill 分类目录(ADR 0005)
 
 ### weekly-apt-security-watch — 系统安全更新巡检
 
-- 调度:`0 8 * * 1`(周一 08:00 UTC = 周一 16:00 东八区),agent 模式(ask-matt),deliver=feishu
-- 脚本:`~/.hermes/scripts/version-watch/apt-security.sh`,只读本地 `/var/lib/apt/lists` 元数据,输出单行 JSON
-- **绝不**执行 `apt upgrade / install`,只报告;元数据超 7 天未刷新时提示先 `sudo apt update`
+单条**只报告、不升级**的系统安全巡检。
 
-> 设计依据:`docs/adr/0001..0006`;运行时文件以 `scripts/` 为唯一版本源,部署到 `~/.hermes/scripts/` 需字节一致(test 强制)。
+- **调度**:周一 08:00 UTC = 周一 16:00 东八区,agent 模式(ask-matt),推送飞书
+- **行为**:只读本地 apt 元数据输出报告;**绝不**执行 `apt upgrade / install`;元数据超 7 天未刷新时提示先 `sudo apt update`
+
+> 设计依据:`docs/adr/0001..0006`。本仓库为纯文档,运行时唯一真源在主机侧 ~/.hermes/scripts(ADR 0007)。
