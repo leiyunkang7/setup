@@ -1,6 +1,6 @@
 # Weekly Update Orchestrator
 
-A scheduled job that upgrades the user's full agent + tooling stack once a week, with manifest snapshots, health gates, and a markdown digest pushed to the hermes-side feishu channel.
+A scheduled job that upgrades the user's full agent + tooling stack on a fixed cadence (every three days at 20:00 UTC, cron `0 20 */3 * *`), with manifest snapshots, health gates, and a markdown digest pushed to the hermes-side feishu channel.
 
 ## Language
 

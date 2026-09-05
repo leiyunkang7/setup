@@ -130,15 +130,15 @@ Minimax-M3,国内版 token plan。
 
 ## Stage 6 — 定时更新软件(自动维护,无手动步骤)
 
-**完成准则**:`hermes cron list` 能看到 `weekly-update-all`(周日 20:00 UTC = 周一 04:00 东八区)与 `weekly-apt-security-watch`(周一 08:00 UTC)。
+**完成准则**:`hermes cron list` 能看到 `weekly-update-all`(每 3 天 20:00 UTC = 次日 04:00 东八区,`0 20 */3 * *`)与 `weekly-apt-security-watch`(周一 08:00 UTC)。
 
 安装完成后,本机由两套定时任务自动维护工具链,agent 不再手动盯版本。本仓库只保留这两条定时任务的 **md 定义**,不含实现;运行时实现位于主机侧 ~/.hermes/scripts,不是本仓库的版本化内容(ADR 0007)。
 
 ### weekly-update-all — 工具链周更
 
-单条定时任务,每周自动升级全量 agent + 工具链,结束时推送 digest 到飞书。
+单条定时任务,每 3 天自动升级全量 agent + 工具链,结束时推送 digest 到飞书。
 
-- **调度**:周日 20:00 UTC = 周一 04:00 东八区(`0 20 * * 0`);任一升级步骤失败即中止后续步骤
+- **调度**:每 3 天 20:00 UTC = 次日 04:00 东八区(`0 20 */3 * *`);任一升级步骤失败即中止后续步骤
 - **覆盖范围**:hermes、codex / claude / openclaw(npm 全局)、opencode(bun 全局)、pi、rustc(rustup)、npm 全局包、bun 全局包、uv tools、yazi / herdr(GitHub 预编译 release)、技能仓库 /root/.agents/skills
 - **跳过清单**:apt / dpkg / pwsh / brew / skills / pip / node 等由各自机制管理、不属于本管道的工具(如 node 走 fnm、cc-switch 自带自动更新)
 - **产物**:每次运行生成升级前后快照对比 + digest,经 hermes 侧飞书渠道推送(ADR 0003),保留最近若干份
